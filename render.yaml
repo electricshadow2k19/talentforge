@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: talentforge-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: USE_AI
+        value: "true"
+      - key: CORS_ORIGINS
+        value: https://talentforge.vercel.app,http://localhost:5173
+      - key: OPENAI_API_KEY
+        sync: false

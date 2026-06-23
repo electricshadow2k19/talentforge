@@ -1,15 +1,15 @@
 import type { PackageResult } from './types'
 
-const API = '/api'
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || ''
 
 export async function fetchHealth(): Promise<{ status: string; ai_enabled: boolean }> {
-  const res = await fetch(`${API}/health`)
+  const res = await fetch(`${API_BASE}/api/health`)
   if (!res.ok) throw new Error('API unavailable')
   return res.json()
 }
 
 export async function generatePackage(form: FormData): Promise<PackageResult> {
-  const res = await fetch(`${API}/generate-package`, {
+  const res = await fetch(`${API_BASE}/api/generate-package`, {
     method: 'POST',
     body: form,
   })
