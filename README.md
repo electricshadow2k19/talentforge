@@ -24,27 +24,27 @@ Product line under **GenvenX Technologies** (IT staffing pillar).
 
 ---
 
-## Live deployment (Vercel + Render)
+## Live app
 
-| Service | Host | URL |
-|---------|------|-----|
-| **Web UI** | Vercel | https://talentforge.vercel.app |
-| **API** | Render | https://talentforge-api.onrender.com |
+| | URL |
+|---|-----|
+| **Web app** | https://talentforge-two.vercel.app |
+| **API health** | https://talentforge-two.vercel.app/api/health |
 
-### One-click backend (Render)
+Frontend + API deployed on Vercel (same domain — no CORS issues).
+
+### Redeploy (CLI)
+
+```bash
+cd TalentForge
+npx vercel --prod
+```
+
+### Optional: separate API on Render
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/electricshadow2k19/talentforge)
 
-After deploy, set `OPENAI_API_KEY` in Render dashboard (optional).
-
-### Frontend (Vercel)
-
-1. Import repo https://github.com/electricshadow2k19/talentforge
-2. **Root directory:** `frontend`
-3. **Environment variable:** `VITE_API_URL` = `https://talentforge-api.onrender.com`
-4. Deploy
-
-Or CLI: `cd frontend && npx vercel --prod`
+Set `VITE_API_URL` in Vercel if using external API.
 
 ---
 

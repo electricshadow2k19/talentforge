@@ -1,6 +1,6 @@
 import type { PackageResult } from './types'
 
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || ''
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 
 export async function fetchHealth(): Promise<{ status: string; ai_enabled: boolean }> {
   const res = await fetch(`${API_BASE}/api/health`)
