@@ -4,10 +4,12 @@
   "outputDirectory": "frontend/dist",
   "functions": {
     "api/**/*.py": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "backend/**"
     }
   },
   "rewrites": [
-    { "source": "/((?!api).*)", "destination": "/index.html" }
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
