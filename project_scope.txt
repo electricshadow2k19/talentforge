@@ -1,0 +1,738 @@
+================================================================================
+TALENTFORGE — PROJECT SCOPE, ARCHITECTURE & DEPLOYMENT SPECIFICATION
+================================================================================
+Version: 2.0
+Audience: Cursor agent / engineering team
+Purpose: End-to-end build, harden, and deploy TalentForge on cloud with browser
+         access, JD-driven resume optimization, temporal skill validation, and
+         professional document output.
+
+Tagline: AI-Powered Recruiter Operating System for Staffing Companies
+
+NOT: Public job board · Candidate marketplace · LinkedIn clone · Full ATS replacement
+
+Primary goal: Reduce recruiter submission effort from 60+ minutes to under 5
+minutes while producing factually accurate, professionally formatted resumes.
+
+
+================================================================================
+1. PRODUCT SUMMARY
+================================================================================
+
+TalentForge is an internal recruiter productivity platform for staffing firms
+that manage bench consultants and candidate databases.
+
+Recruiters and admins use a web portal (browser) to:
+  1. Manage candidates and multiple resume versions per candidate
+  2. Provide a Job Description (paste or file upload)
+  3. Provide a Resume (Word/PDF upload or paste text)
+  4. Run JD-driven evaluation and optimization
+  5. Download professionally formatted optimized resume (DOCX/PDF)
+  6. Generate submission package, interview questions, email drafts
+  7. Track submissions and audit activity
+
+The system MUST optimize resumes against JD requirements by:
+  - Adding relevant skills, tools, and responsibility bullets where truthful
+  - Rewording and reordering existing content for ATS alignment
+  - NEVER fabricating employers, dates, projects, certifications, or experience
+
+The system MUST perform TEMPORAL DUE DILIGENCE:
+  - Before attributing a tool/skill/version to a project or role, verify when that
+    technology/version was actually released
+  - Only place that skill/version on employment periods that START AFTER release
+  - Example: PostgreSQL 16 released ~2023 (GA). If JD asks for Postgres 16,
+    do NOT add it to a project that ended in 2021. Only add to roles/projects
+    whose date range overlaps post-release usage window.
+
+
+================================================================================
+2. BUSINESS OBJECTIVES
+================================================================================
+
+  O1. Cloud-hosted portal accessible via HTTPS in any modern browser
+  O2. JD is the single source of truth for evaluation and resume updates
+  O3. Resume updates improve ATS alignment without factual fabrication
+  O4. Temporal validation prevents anachronistic skill/version claims
+  O5. Output resumes look like professional Word documents (clean layout)
+  O6. Support admin + recruiter RBAC with audit logging
+  O7. Target < 5 minutes per submission for experienced recruiters
+
+
+================================================================================
+3. USER ROLES & PERMISSIONS
+================================================================================
+
+ADMIN
+  - Create/disable recruiter accounts
+  - Create, edit, delete candidates
+  - Upload unlimited resume versions per candidate
+  - View dashboard, submissions, activity log
+  - Manage system settings (AI keys, storage, feature flags)
+
+RECRUITER
+  - Login, search/view candidates
+  - Select candidate + resume version OR paste/upload resume ad hoc
+  - Upload/paste JD, run evaluation pipeline
+  - Download optimized DOCX/PDF, copy emails
+  - Create and update submission records
+  - CANNOT create users, delete candidates, or change admin settings
+
+MVP RULE: No email sending (SMTP/Outlook/Gmail). Generate content only.
+
+
+================================================================================
+4. CLOUD DEPLOYMENT TARGET
+================================================================================
+
+4.1 DEPLOYMENT GOAL
+  - Production URL example: https://talentforge.<company-domain>.com
+  - Or managed host: https://talentforge-production.up.railway.app
+  - Users access ONLY via browser (no local install required)
+
+4.2 RECOMMENDED CLOUD ARCHITECTURE (PRIMARY)
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                         INTERNET / BROWSER                          │
+  └───────────────────────────────┬─────────────────────────────────────┘
+                                  │ HTTPS
+  ┌───────────────────────────────▼─────────────────────────────────────┐
+  │  CDN / Static Host (Vercel, CloudFront+S3, or Netlify)              │
+  │  React SPA — login, dashboard, workspace, results                   │
+  └───────────────────────────────┬─────────────────────────────────────┘
+                                  │ REST API (JWT)
+  ┌───────────────────────────────▼─────────────────────────────────────┐
+  │  API Service (Railway, Render, ECS, or Cloud Run)                   │
+  │  FastAPI — auth, candidates, resumes, pipeline, submissions         │
+  └───────┬─────────────────┬─────────────────────┬───────────────────────┘
+          │                 │                     │
+          ▼                 ▼                     ▼
+   PostgreSQL          Object Storage         OpenAI API
+   (RDS, Neon,         (S3 / R2 /            (optional;
+    Railway PG)          Supabase Storage)      heuristic fallback)
+          │
+          ▼
+   Alembic migrations, audit log, submissions, candidates
+
+4.3 ALTERNATIVE (ALL-IN-ONE DOCKER)
+  - docker-compose on VPS (DigitalOcean, AWS EC2) OR
+  - AWS ECS Fargate + RDS + S3
+  - Nginx reverse proxy + TLS (Let's Encrypt)
+
+4.4 ENVIRONMENT SEPARATION
+  - development  — local SQLite optional, debug on
+  - staging      — cloud PG + S3, test data
+  - production   — cloud PG + S3, secrets in vault/env
+
+4.5 REQUIRED SECRETS (production)
+  - DATABASE_URL
+  - JWT_SECRET
+  - OPENAI_API_KEY (optional)
+  - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / S3_BUCKET (or R2 equivalent)
+  - CORS_ORIGINS (production frontend URL)
+
+4.6 CI/CD (minimum)
+  - GitHub Actions: lint, pytest, build frontend, deploy API + static
+  - Database migrations run on deploy (alembic upgrade head)
+  - Health check: GET /api/health
+
+
+================================================================================
+5. SYSTEM ARCHITECTURE (LOGICAL)
+================================================================================
+
+  ┌──────────────┐     ┌──────────────┐     ┌──────────────────────────┐
+  │   Web UI     │────▶│  API Gateway │────▶│  Application Services    │
+  │  (React)     │     │  (FastAPI)   │     │                          │
+  └──────────────┘     └──────────────┘     │  • AuthService           │
+                                            │  • CandidateService      │
+                                            │  • ResumeService         │
+                                            │  • SubmissionService     │
+                                            │  • PipelineOrchestrator  │
+                                            └───────────┬──────────────┘
+                                                        │
+                    ┌───────────────────────────────────┼────────────────────┐
+                    ▼                   ▼               ▼                    ▼
+             ┌────────────┐    ┌────────────┐  ┌────────────┐    ┌────────────┐
+             │ JD Parser  │    │ Resume     │  │ ATS Engine │    │ Temporal   │
+             │            │    │ Parser     │  │ (weighted) │    │ Validator  │
+             └────────────┘    └────────────┘  └────────────┘    └────────────┘
+                    │                   │               │                    │
+                    └───────────────────┴───────────────┴────────────────────┘
+                                                        │
+                                                        ▼
+                                            ┌──────────────────────────┐
+                                            │ Resume Optimizer         │
+                                            │ + Responsibility Injector│
+                                            │ + Formatting Engine      │
+                                            └───────────┬──────────────┘
+                                                        │
+                    ┌───────────────────────────────────┼────────────────────┐
+                    ▼                   ▼               ▼                    ▼
+             ┌────────────┐    ┌────────────┐  ┌────────────┐    ┌────────────┐
+             │ Gap        │    │ Package    │  │ Document   │    │ Audit      │
+             │ Analysis   │    │ Generator  │  │ Builder    │    │ Logger     │
+             │            │    │            │  │ DOCX/PDF   │    │            │
+             └────────────┘    └────────────┘  └────────────┘    └────────────┘
+
+
+================================================================================
+6. UI SPECIFICATION
+================================================================================
+
+6.1 GLOBAL LAYOUT
+  - Sidebar: Dashboard, Candidates, Recruiter Workspace, Submissions
+  - Admin only: Recruiters, Settings
+  - Top bar: user name, role, sign out
+  - Responsive: desktop-first; tablet usable
+
+6.2 LOGIN PAGE
+  - Email + password
+  - Redirect to dashboard on success
+
+6.3 RECRUITER WORKSPACE (PRIMARY INPUT SCREEN)
+
+  INPUT — JOB DESCRIPTION (required, one of):
+    [ ] Text area — paste full JD
+    [ ] File upload — PDF, DOCX, TXT
+
+  INPUT — RESUME (required, one of):
+    Mode A — From database:
+      [ ] Candidate dropdown
+      [ ] Resume version dropdown (DevOps, QA, Cloud, etc.)
+    Mode B — Ad hoc (no candidate):
+      [ ] Text area — paste resume text
+      [ ] File upload — DOCX, PDF, TXT
+
+  ACTION:
+    [ Run JD Evaluation & Optimize Resume ]
+
+  OUTPUT — Results panel (tabs below)
+
+6.4 RESULTS PANEL TABS
+  1. Dashboard      — ATS before/after, readiness, improvement %
+  2. JD Analysis      — Parsed structured JD (skills, tools, versions, dates)
+  3. Original Resume  — Professional preview (DOCX render)
+  4. ATS Score        — Weighted breakdown
+  5. Gap Analysis     — Missing skills/tools, suggestions
+  6. Temporal Review  — NEW: skill/version placement audit log
+                        (what was added, where, why dates allow it)
+  7. Optimized Resume — Professional preview + download DOCX/PDF
+  8. Submission       — Client package sections
+  9. Questions        — Interview questions by difficulty
+  10. Documents       — All downloadable artifacts
+  11. Emails          — Vendor, candidate, manager (copy only)
+
+6.5 CANDIDATE MANAGEMENT (ADMIN)
+  - List, search, create, edit, delete
+  - Candidate detail: upload multiple resumes, set default, view/delete
+
+6.6 FORMATTING REQUIREMENTS (UI + OUTPUT)
+  - No overlapping text blocks in preview
+  - No duplicate section headings (e.g. "SKILLS" twice)
+  - Standard resume structure:
+      Name (centered)
+      Title / contact line
+      Professional Summary
+      Technical Skills (grouped)
+      Professional Experience (company | role | dates)
+        - Bullet points
+      Education
+      Certifications
+  - Consistent fonts, spacing, bullet style in DOCX and PDF
+  - Page breaks sensible; no orphaned headings
+
+
+================================================================================
+7. CORE PIPELINE — JD-DRIVEN EVALUATION & RESUME UPDATE
+================================================================================
+
+Every optimization run follows this ordered pipeline:
+
+  STEP 1 — INGEST
+    • Parse JD from text or file (PDF/DOCX/TXT)
+    • Parse resume from text or file (DOCX/PDF/TXT)
+    • Extract raw text + structure (sections, roles, date ranges)
+
+  STEP 2 — JD ANALYSIS (source of truth)
+    Extract structured JSON:
+      - job_title
+      - required_skills, preferred_skills
+      - tools, technologies, versions (e.g. "PostgreSQL 16", "K8s 1.29")
+      - responsibilities
+      - certifications, experience years
+      - keywords
+    Ignore for scoring: visa, citizenship, gender, age, race, religion
+
+  STEP 3 — RESUME ANALYSIS
+    Extract:
+      - candidate_name, title, contact
+      - employment_history[]: company, role, start_date, end_date, bullets
+      - skills, tools, certifications, education
+      - parsed date ranges per role (normalize to YYYY-MM)
+
+  STEP 4 — ATS SCORING (before optimization)
+    Weighted model (must sum to 100%):
+      Skills Match         35%
+      Tools & Technologies 20%
+      Responsibilities     20%
+      Experience Alignment 15%
+      Keyword Coverage     10%
+
+  STEP 5 — GAP ANALYSIS
+    Compare resume vs JD:
+      - matched_skills, missing_skills
+      - missing_tools, missing_keywords
+      - weak_areas, strength_areas
+      - actionable_suggestions
+
+  STEP 6 — TEMPORAL DUE DILIGENCE (NEW — CRITICAL)
+    For each JD requirement that includes a versioned tool/skill:
+
+    6a. Resolve release date from Technology Release Registry:
+        - Curated JSON DB: { "PostgreSQL 16": "2023-09", "Kubernetes 1.29": "2023-12", ... }
+        - Fallback: LLM + web knowledge with confidence flag
+        - Store: tool, version, release_date, confidence
+
+    6b. For each employment block in resume:
+        - Parse start_date, end_date
+        - Determine eligible window for technology attribution
+
+    6c. Placement rules:
+        - MAY add tool/version to role IF role end_date >= release_date
+          (or role is "Present" / current)
+        - MUST NOT add to roles that ended before release_date
+        - If no eligible role exists: add to Skills section ONLY with wording
+          like "exposure in lab/personal" ONLY if resume already supports it;
+          otherwise flag as "cannot add without fabrication" in Temporal Review
+
+    6d. Output temporal_audit[]:
+        { requirement, release_date, placed_in_role, company, dates, allowed: true/false, reason }
+
+  STEP 7 — RESUME OPTIMIZATION (JD-driven)
+    Allowed:
+      - Reword existing bullets for keyword alignment
+      - Reorder sections and bullets by relevance to JD
+      - Insert missing skills into Skills section IF candidate already has them elsewhere
+      - ADD responsibility bullet points to eligible roles that demonstrate JD tools/skills
+        using ONLY facts inferable from existing resume content
+      - Improve professional summary tied to JD title
+
+    Forbidden:
+      - Fake employers, dates, degrees, certifications, projects
+      - Adding tools to pre-release employment periods (blocked by Step 6)
+      - Inventing years of experience with a technology
+
+    Optimizer runs iteratively until ATS score plateaus or max 2 passes.
+
+  STEP 8 — ATS RE-SCORE (after optimization)
+    Score optimized resume; expose before/after delta.
+
+  STEP 9 — GENERATE ARTIFACTS
+    - Submission package (summary, strengths, risks, skills matrix)
+    - Interview questions (technical, scenario, behavioral, JD-specific)
+    - Email drafts (vendor cover-letter style; no ATS score in vendor email)
+
+  STEP 10 — PROFESSIONAL DOCUMENT BUILD
+    - Build DOCX via structured section model (not raw text dump)
+    - Build PDF from same structure
+  - Validate: no duplicate headings, no overlap, spell-check optional
+
+  STEP 11 — PERSIST
+    - Save JobDescription, Submission, package_json, temporal_audit
+    - Audit log entry
+
+
+================================================================================
+8. TECHNOLOGY RELEASE REGISTRY (TEMPORAL ENGINE)
+================================================================================
+
+8.1 PURPOSE
+  Prevent anachronistic claims (e.g. Postgres 16 experience in 2019 role).
+
+8.2 DATA SOURCE (layered)
+  Layer 1 — Static registry file (backend/data/tech_releases.json):
+    {
+      "postgresql": {
+        "16": { "release_date": "2023-09-14", "notes": "PG 16 GA" },
+        "15": { "release_date": "2022-10-13" }
+      },
+      "kubernetes": { "1.29": { "release_date": "2023-12-13" } },
+      ...
+    }
+
+  Layer 2 — LLM lookup with structured output (when not in registry):
+    { "tool", "version", "release_date", "confidence": "high|medium|low" }
+
+  Layer 3 — Manual override table in DB (admin can correct dates)
+
+8.3 MATCHING LOGIC
+  - Normalize JD tokens: "Postgres 16", "PostgreSQL 16", "PG16" -> same entity
+  - Match employment date ranges with month granularity
+  - "Present" / "Current" = today
+
+8.4 UI — TEMPORAL REVIEW TAB
+  Show table:
+    Requirement | Release Date | Target Role | Role Dates | Allowed | Action Taken
+  Highlight blocked placements in amber/red with explanation.
+
+
+================================================================================
+9. RESUME FORMATTING ENGINE
+================================================================================
+
+9.1 PROBLEM (current gaps to fix)
+  - Overlapping blocks in preview
+  - Redundant headings
+  - Non-professional layout
+
+9.2 SOLUTION — STRUCTURED RESUME MODEL
+  Intermediate representation (not flat text):
+
+    ResumeDocument:
+      header: { name, title, contact_lines[] }
+      summary: string
+      skills: { category: string, items: string[] }[]
+      experience: {
+        company, role, location, start, end,
+        bullets: string[]
+      }[]
+      education: { degree, school, year }[]
+      certifications: string[]
+
+  9.3 DOCX BUILDER RULES
+    - Centered name (18pt bold), title (12pt), contact (10pt)
+    - Section headings: ALL CAPS, bold, horizontal rule optional, ONCE only
+    - Job header: Company | Role | Dates on one line; location on next if present
+    - Bullets: hanging indent, consistent "•" or dash
+    - Skills: comma-separated or 2-column layout; no duplicate skill tokens
+    - Max 2 pages recommended; warn if exceeded
+
+  9.4 PREVIEW
+    - Frontend: docx-preview on generated blob OR server-side render
+    - Must match downloadable DOCX
+
+  9.5 VALIDATION LINTER (post-build)
+    - assert no duplicate section names
+    - assert every experience block has dates
+    - assert no skill appears in experience before release_date (cross-check Step 6)
+
+
+================================================================================
+10. ATS ENGINE (UNCHANGED WEIGHTS, JD-CENTRIC)
+================================================================================
+
+  Skills Match         35%
+  Tools & Technologies 20%
+  Responsibilities     20%
+  Experience Alignment 15%
+  Keyword Coverage     10%
+
+  Excluded from scoring: visa, citizenship, nationality, gender, age, race,
+  religion, disability, marital status.
+
+
+================================================================================
+11. DATA MODEL
+================================================================================
+
+  users
+    id, email, name, role (admin|recruiter), password_hash, is_active, created_at
+
+  candidates
+    id, first_name, last_name, email, phone, locations, availability,
+    status, total_experience, primary_skill, secondary_skills, notes,
+    created_by_id, created_at, updated_at
+
+  resumes
+    id, candidate_id, name, resume_type, parsed_text, structured_json,
+    skills_extracted, is_default, storage_key_docx, storage_key_pdf, created_at
+
+  job_descriptions
+    id, title, raw_text, structured_json, source_filename, created_by_id, created_at
+
+  submissions
+    id, candidate_id, resume_id, jd_id, recruiter_id,
+    ats_score, ats_score_before, package_json, temporal_audit_json,
+    summary, status, created_at, updated_at
+
+  activities (audit)
+    id, user_id, action, entity_type, entity_id, metadata_json, created_at
+
+  tech_releases (optional DB table)
+    id, tool_name, version, release_date, source, updated_at
+
+  settings
+    id, key, value (json), updated_at
+
+
+================================================================================
+12. API ENDPOINTS
+================================================================================
+
+  AUTH
+    POST   /api/auth/login
+    GET    /api/auth/me
+
+  CANDIDATES
+    GET    /api/candidates?q=&skill=&location=
+    POST   /api/candidates              (admin)
+    GET    /api/candidates/{id}
+    PATCH  /api/candidates/{id}        (admin)
+    DELETE /api/candidates/{id}         (admin)
+
+  RESUMES
+    GET    /api/candidates/{id}/resumes
+    POST   /api/candidates/{id}/resumes (admin) — multipart file or text
+    GET    /api/candidates/{id}/resumes/{rid}
+    GET    /api/candidates/{id}/resumes/{rid}/file
+    PATCH  /api/candidates/{id}/resumes/{rid}  (admin, set default)
+    DELETE /api/candidates/{id}/resumes/{rid} (admin)
+
+  PIPELINE / SUBMISSIONS
+    POST   /api/submissions/analyze     — multipart: jd text/file + resume ref or file
+    GET    /api/submissions
+    GET    /api/submissions/{id}
+    GET    /api/submissions/{id}/package
+    PATCH  /api/submissions/{id}        — status, summary
+
+  ADMIN
+    GET    /api/dashboard/stats
+    GET    /api/activities
+    GET    /api/recruiters
+    POST   /api/recruiters
+
+  HEALTH
+    GET    /api/health
+
+  LEGACY (optional, disable in production)
+    POST   /api/generate-package       — anonymous paste demo
+
+
+================================================================================
+13. TECH STACK (TARGET)
+================================================================================
+
+  Frontend     React 18, TypeScript, Vite, Tailwind CSS, React Router
+  Backend      Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic
+  Database     PostgreSQL (production), SQLite (local dev only)
+  Storage      AWS S3 or Cloudflare R2 (resume files, generated docs)
+  Auth         JWT (Phase 1); Clerk optional (Phase 2)
+  AI           OpenAI API (gpt-4o-mini default); heuristic fallback required
+  Documents    python-docx (structured builder), ReportLab or docx2pdf (PDF)
+  Preview      docx-preview (frontend)
+  Deploy       Railway/Render (API) + Vercel (frontend) OR Docker on VPS
+  CI/CD        GitHub Actions
+
+
+================================================================================
+14. WORKFLOWS
+================================================================================
+
+14.1 ADMIN — ONBOARD CANDIDATE
+  Login -> Candidates -> Add candidate -> Manage -> Upload resumes (DOCX/PDF)
+  -> System parses text + structure -> Skills extracted -> Set default resume
+
+14.2 RECRUITER — SUBMIT TO CLIENT
+  Login -> Workspace ->
+    Select candidate + resume  OR  upload resume file/paste
+    Paste/upload JD ->
+    Run evaluation ->
+    Review Temporal Review tab (verify no blocked placements) ->
+    Review Optimized Resume preview ->
+    Download DOCX/PDF ->
+    Copy vendor email ->
+    Send manually in Outlook/Gmail ->
+    Update submission status
+
+14.3 SYSTEM — OPTIMIZATION (automated)
+  JD parse -> Resume parse -> ATS before -> Gap analysis ->
+  Temporal validation -> Optimize + inject responsibility bullets ->
+  ATS after -> Generate package/docs -> Save submission -> Audit log
+
+
+================================================================================
+15. AI SYSTEM PROMPT RULES (MANDATORY)
+================================================================================
+
+  You are an expert recruiter assistant for IT staffing.
+
+  JD is the authority for what to emphasize and what to add.
+
+  When adding skills, tools, or responsibility bullets:
+    - Only add to employment periods where dates allow (temporal rules)
+    - Derive bullet content from existing resume facts
+    - Prefer strengthening existing bullets over inventing new roles
+
+  NEVER fabricate: experience, skills, certifications, employers, projects,
+  education, dates, clearance, citizenship, visa.
+
+  IGNORE for ATS scoring: visa, citizenship, nationality, gender, age, race,
+  religion.
+
+  Output must be valid JSON when structured output is requested.
+
+
+================================================================================
+16. ACCEPTANCE CRITERIA (MVP + V2)
+================================================================================
+
+MVP — PLATFORM
+  [ ] Deployed on cloud with HTTPS; accessible in browser
+  [ ] Admin can create recruiters and candidates
+  [ ] Admin can upload multiple resumes per candidate
+  [ ] Recruiter can login and run full pipeline from Workspace
+  [ ] JD accepted as text box OR file (PDF/DOCX/TXT)
+  [ ] Resume accepted as Word/PDF file OR text box OR from database
+  [ ] Submission saved with audit log
+  [ ] No email sending
+
+MVP — INTELLIGENCE
+  [ ] Weighted ATS score with before/after
+  [ ] Gap analysis with missing skills/tools
+  [ ] Optimized resume improves ATS vs original (measurable on test cases)
+  [ ] Vendor email is cover-letter style (no ATS % mention)
+
+V2 — TEMPORAL DUE DILIGENCE (REQUIRED FOR THIS SPEC)
+  [ ] tech_releases.json registry with top 200 tools/versions
+  [ ] Parser extracts versioned requirements from JD (e.g. "Postgres 16")
+  [ ] Optimizer blocks adding version to pre-release employment periods
+  [ ] Temporal Review tab shows audit trail per placement decision
+  [ ] Unit tests: Postgres 16 NOT added to 2021 role; IS added to 2024 role
+
+V2 — FORMATTING (REQUIRED FOR THIS SPEC)
+  [ ] DOCX output uses structured ResumeDocument model
+  [ ] No duplicate section headings in output
+  [ ] No overlapping layout in browser preview
+  [ ] Professional resume layout per section 9
+  [ ] PDF matches DOCX content
+
+V2 — RESPONSIBILITY INJECTION
+  [ ] Missing JD responsibilities added as bullets ONLY on eligible roles
+  [ ] Bullets reference tools/skills from JD where factually supported
+  [ ] No new employers or date ranges created
+
+
+================================================================================
+17. IMPLEMENTATION PHASES (FOR CURSOR AGENT)
+================================================================================
+
+PHASE 1 — Cloud foundation (Week 1)
+  - PostgreSQL + S3 + env config
+  - Dockerize API; deploy API + frontend to cloud
+  - Alembic migrations, seed data, health checks
+  - JWT auth, RBAC, CORS for production URL
+
+PHASE 2 — Workspace inputs (Week 1-2)
+  - JD: textarea + file upload (PDF/DOCX/TXT)
+  - Resume: textarea + DOCX/PDF upload + DB selection
+  - Wire to /api/submissions/analyze
+
+PHASE 3 — Temporal engine (Week 2-3)
+  - tech_releases.json + parser for versioned JD requirements
+  - Employment date extractor from resume
+  - temporal_validator service + temporal_audit in response
+  - Temporal Review UI tab
+  - pytest for date placement rules
+
+PHASE 4 — Optimizer v2 (Week 3)
+  - JD-driven responsibility bullet injection
+  - Integrate temporal validator into optimizer (hard block)
+  - Re-score loop
+
+PHASE 5 — Formatting engine (Week 3-4)
+  - ResumeDocument structured model
+  - Rewrite docx builder (no redundant headings)
+  - Fix docx-preview layout issues
+  - PDF export parity
+  - Format linter
+
+PHASE 6 — Hardening & launch (Week 4)
+  - Submission status UI
+  - Error handling, loading states
+  - CI/CD pipeline
+  - Production monitoring (optional: Sentry)
+  - Documentation + runbook
+
+
+================================================================================
+18. TEST CASES (TEMPORAL — MUST PASS)
+================================================================================
+
+  TC-T01
+    JD requires: PostgreSQL 16
+    Resume has role: "DBA at Acme" 2019-2021
+    Expected: PostgreSQL 16 NOT added to Acme bullets
+
+  TC-T02
+    JD requires: PostgreSQL 16
+    Resume has role: "Cloud Engineer at Beta" 2023-Present
+    Expected: PostgreSQL 16 MAY be added to Beta bullets if other facts support DB work
+
+  TC-T03
+    JD requires: Kubernetes 1.29
+    Resume has role ended 2022
+    Expected: K8s 1.29 blocked for that role (released Dec 2023)
+
+  TC-T04
+    Temporal Review tab lists all placement decisions with allowed=true/false
+
+
+================================================================================
+19. NON-FUNCTIONAL REQUIREMENTS
+================================================================================
+
+  Performance   Pipeline < 60s (heuristic), < 120s (AI) for typical resume+JD
+  Security      HTTPS only, bcrypt passwords, JWT expiry, RBAC, no secrets in repo
+  Availability  Single-region MVP; target 99.5% uptime
+  Storage       S3 private buckets; presigned URLs for download
+  Compliance    Recruiter sends email manually; audit log for actions
+  Browser       Chrome, Edge, Firefox (latest 2 versions)
+
+
+================================================================================
+20. REPOSITORY STRUCTURE (TARGET)
+================================================================================
+
+  TalentForge/
+    frontend/          React SPA
+    backend/
+      app/
+        api/routes/
+        auth/
+        db/models.py
+        services/
+          pipeline.py
+          temporal_validator.py
+          resume_formatter.py
+          optimizer.py
+          ats_engine.py
+          ...
+        data/tech_releases.json
+      alembic/
+      tests/
+    docker-compose.yml
+    docker-compose.prod.yml
+    .env.example
+    project_scope.txt        (this file)
+    start-local.ps1
+
+
+================================================================================
+21. DEPLOYMENT RUNBOOK (SUMMARY)
+================================================================================
+
+  1. Provision PostgreSQL (Neon/Railway/RDS)
+  2. Provision S3 bucket (private) + IAM credentials
+  3. Set environment variables on API host
+  4. alembic upgrade head && python scripts/seed.py
+  5. Deploy FastAPI (uvicorn or gunicorn)
+  6. Build frontend with VITE_API_URL=<api-url>
+  7. Deploy static frontend to Vercel/CloudFront
+  8. Verify GET /api/health and login flow
+  9. Smoke test: upload JD + resume -> optimized DOCX downloads
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+Last updated: 2026 — TalentForge v2.0 scope for cloud deployment and Cursor agent
