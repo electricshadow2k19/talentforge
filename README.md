@@ -6,92 +6,102 @@ Product line under **GenvenX Technologies** (IT staffing pillar).
 
 ---
 
-## MVP scope (v0.1)
-
-| Step | Output |
-|------|--------|
-| 1. JD analysis | Mandatory/nice skills, experience, visa, location, remote/hybrid |
-| 2. Resume analysis | Skills, certs, experience, contact, visa |
-| 3. ATS score | Section scores + overall + missing keywords |
-| 4. Resume optimization | JD-aligned rewrites (no false claims) |
-| 5. Submission package | Summary, strengths, risks |
-| 6. Interview questions | Technical, scenario, client, recruiter screen |
-| 7. Email drafts | Vendor, candidate, manager |
-
-**Cut from v1:** Job boards, CRM, payroll, multi-tenant billing, bench search, vendor intelligence.
-
-**Success metric:** ~60 min → under 5 min per submission; 5 paying recruiters in 90 days.
-
----
-
-## Live app (cloud)
+## Live app (cloud) — use this
 
 | | URL |
-|---|-----|
-| **Web app** | https://talentforge-two.vercel.app |
-| **API** | https://talentforge-api.onrender.com |
-| **API health** | https://talentforge-api.onrender.com/api/health |
+|---|---|
+| **App** | **https://talentforge-two.vercel.app** |
+| **API health** | https://talentforge-two.vercel.app/api/health |
 
-**Architecture:** React SPA on Vercel + FastAPI + PostgreSQL on Render.
+Open the app in any browser. No local install required.
 
-### Redeploy frontend
+### Login credentials
 
-```bash
+| Role | Email | Password |
+|------|-------|----------|
+| **Admin** | `admin@genvenx.com` | `admin123` |
+| **Recruiter** | `hira@genvenx.com` | `recruiter123` |
+
+### What works in production
+
+- Login, dashboard, candidate management
+- Recruiter workspace — JD paste/upload, resume from database or ad hoc
+- Full pipeline: ATS scoring, gap analysis, temporal review, optimized resume, submission package, emails
+- Heuristic mode (no OpenAI key required); set `OPENAI_API_KEY` in Vercel for AI mode
+
+### Architecture
+
+**Vercel full-stack** — React SPA + FastAPI serverless API on the same domain (`talentforge-two.vercel.app`).
+
+Data is bootstrapped automatically on first request (demo admin, recruiter, and sample candidate).
+
+> **Note:** Current cloud deploy uses ephemeral `/tmp` SQLite on Vercel serverless. Data may reset on cold starts. For persistent production data, upgrade to PostgreSQL (see below).
+
+### Optional: persistent PostgreSQL
+
+For production-grade data persistence, choose one:
+
+1. **Neon on Vercel** (recommended, free tier)
+   - Vercel dashboard → Integrations → add **Neon** → accept terms
+   - Sets `DATABASE_URL` automatically
+   - Redeploy: `npx vercel --prod`
+
+2. **Render API + Postgres** (separate API host)
+   - [Deploy to Render](https://render.com/deploy?repo=https://github.com/electricshadow2k19/talentforge) (uses `render.yaml`)
+   - Set `VITE_API_URL` in Vercel to your Render API URL
+   - Redeploy frontend: `npx vercel --prod`
+
+### Redeploy
+
+```powershell
 cd TalentForge
 npx vercel --prod
 ```
 
-### API on Render
+---
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/electricshadow2k19/talentforge)
+## MVP scope
 
-Uses `render.yaml` (PostgreSQL + Docker API). `VITE_API_URL` is set to the Render API URL in Vercel.
+| Step | Output |
+|------|--------|
+| 1. JD analysis | Skills, tools, versions, responsibilities |
+| 2. Resume analysis | Skills, certs, experience, work history |
+| 3. ATS score | Weighted before/after scores |
+| 4. Temporal review | Skill/version placement audit |
+| 5. Resume optimization | JD-aligned rewrites (no fabrication) |
+| 6. Submission package | Summary, strengths, risks |
+| 7. Interview questions | Technical, scenario, behavioral |
+| 8. Email drafts | Vendor, candidate, manager |
 
 ---
 
-## Quick start (local)
+## Local development (optional)
 
-### Backend (port 8000)
+For engineers only — end users should use the cloud URL above.
 
-```bash
-cd TalentForge/backend
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-pip install -r requirements.txt
-copy .env.example .env            # add OPENAI_API_KEY for AI mode
-uvicorn app.main:app --reload --port 8000
+```powershell
+.\start-local.ps1
 ```
 
-### Frontend (port 5173)
+Or with Docker:
 
-```bash
-cd TalentForge/frontend
-npm install
-npm run dev
+```powershell
+docker compose up
 ```
 
-Open **http://localhost:5173** → click **Load sample** → **Generate submission package**.
-
 ---
 
-## Modes
+## API endpoints
 
-| Mode | When | Quality |
-|------|------|---------|
-| **AI** | `OPENAI_API_KEY` set in `.env` | Best — GPT-4o-mini structured JSON |
-| **Heuristic** | No API key | Good for demo — keyword/skill matching |
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/health` | GET | No | Status + AI enabled |
+| `/api/auth/login` | POST | No | JWT login |
+| `/api/candidates` | GET/POST | Yes | Candidate CRUD |
+| `/api/submissions/analyze` | POST | Yes | Full JD pipeline |
+| `/api/generate-package` | POST | No | Legacy anonymous demo |
 
----
-
-## API
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/health` | GET | Status + AI enabled |
-| `/api/generate-package` | POST | Multipart: `job_description`, `resume`, or `jd_file`, `resume_file` |
-| `/api/generate-package/json` | POST | JSON body `{ job_description, resume }` |
-
-Docs: http://localhost:8000/docs
+Interactive docs (local): http://localhost:8000/docs
 
 ---
 
@@ -99,45 +109,14 @@ Docs: http://localhost:8000/docs
 
 ```
 TalentForge/
-├── README.md
-├── PRODUCT.md              # Vision, pricing, roadmap
-├── backend/
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── services/pipeline.py
-│   │   └── parsers/document.py
-│   └── requirements.txt
-└── frontend/
-    └── src/
-        ├── App.tsx
-        └── components/ResultsPanel.tsx
+├── frontend/          React SPA (Vite + Tailwind)
+├── backend/           FastAPI + SQLAlchemy + pipeline services
+├── api/               Vercel serverless entrypoint
+├── vercel.json        Cloud deployment config
+├── render.yaml        Optional Render blueprint (API + Postgres)
+├── docker-compose.yml Local dev stack
+└── project_scope.txt  Full product spec
 ```
-
----
-
-## Roadmap
-
-### Phase 2 (weeks 6–8)
-- DOCX resume export (formatted)
-- Submission history (SQLite)
-- RTR package template
-
-### Phase 3 (months 3–4)
-- Multi-tenant auth
-- Stripe billing ($49 / $199 / $499)
-- Candidate ranking (batch upload)
-
-### Phase 4
-- Bench database search
-- Vendor intelligence
-
----
-
-## GenvenX fit
-
-TalentForge automates the **daily workflow** recruiters already do manually — directly supports GenvenX staffing revenue, not generic Q&A.
-
-**Positioning:** *Workflow automation, not another ChatGPT tab.*
 
 ---
 
