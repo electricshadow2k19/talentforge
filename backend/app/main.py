@@ -1,4 +1,5 @@
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,10 +10,39 @@ from app.models.schemas import GeneratePackageResponse, HealthResponse, TextInpu
 from app.parsers.document import extract_text_from_bytes
 from app.services.pipeline import run_pipeline
 
+
+def _bootstrap_db() -> None:
+    """Create tables and seed on cold start (serverless / first deploy)."""
+    if settings.database_url.startswith("sqlite"):
+        from app.db.base import Base
+        from app.db import models  # noqa: F401
+        from app.db.session import engine
+
+        Base.metadata.create_all(bind=engine)
+    else:
+        import subprocess
+        import sys
+
+        subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=False)
+    try:
+        from scripts.seed import seed
+
+        seed()
+    except Exception:
+        pass
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _bootstrap_db()
+    yield
+
+
 app = FastAPI(
     title="TalentForge API",
     description="AI-Powered Recruiter Operating System for Staffing Companies",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
