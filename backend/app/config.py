@@ -1,4 +1,12 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
+
+
+def _default_database_url() -> str:
+    # Vercel serverless filesystem is read-only except /tmp
+    if os.getenv("VERCEL") or os.getenv("VERCEL_ENV"):
+        return "sqlite:////tmp/talentforge.db"
+    return "sqlite:///./talentforge.db"
 
 
 class Settings(BaseSettings):
@@ -15,7 +23,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     # Database — SQLite default for local dev without Docker/Postgres
-    database_url: str = "sqlite:///./talentforge.db"
+    database_url: str = _default_database_url()
 
     # Auth — dev JWT (use Clerk in production when keys are set)
     jwt_secret: str = "change-me-in-production-talentforge-jwt-secret"

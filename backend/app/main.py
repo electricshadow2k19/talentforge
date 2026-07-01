@@ -13,23 +13,71 @@ from app.services.pipeline import run_pipeline
 
 def _bootstrap_db() -> None:
     """Create tables and seed on cold start (serverless / first deploy)."""
-    if settings.database_url.startswith("sqlite"):
+    try:
         from app.db.base import Base
         from app.db import models  # noqa: F401
         from app.db.session import engine
 
         Base.metadata.create_all(bind=engine)
-    else:
-        import subprocess
-        import sys
 
-        subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=False)
-    try:
-        from scripts.seed import seed
+        from app.auth.security import hash_password
+        from app.db.models import Candidate, CandidateStatus, Resume, User, UserRole
+        from app.db.session import SessionLocal
+        from app.services.analyzers import analyze_resume
 
-        seed()
+        sample_resume = """RAJ KUMAR
+Senior DevOps Engineer | raj.kumar@email.com | Dallas, TX
+PROFESSIONAL SUMMARY
+DevOps Engineer with 10 years in AWS, Kubernetes, Terraform, CI/CD.
+SKILLS: AWS, Terraform, Kubernetes, Docker, Jenkins, Python
+EXPERIENCE
+Northrop Grumman — DevOps Engineer | 2020–2026
+- Built CI/CD pipelines with Jenkins and Terraform on AWS EKS"""
+
+        db = SessionLocal()
+        try:
+            if db.query(User).filter(User.email == "admin@genvenx.com").first():
+                return
+            admin = User(
+                email="admin@genvenx.com",
+                name="Admin User",
+                role=UserRole.admin,
+                password_hash=hash_password("admin123"),
+            )
+            recruiter = User(
+                email="hira@genvenx.com",
+                name="Hira Recruiter",
+                role=UserRole.recruiter,
+                password_hash=hash_password("recruiter123"),
+            )
+            db.add_all([admin, recruiter])
+            db.flush()
+            cand = Candidate(
+                first_name="Raj",
+                last_name="Kumar",
+                email="raj.kumar@email.com",
+                primary_skill="DevOps",
+                status=CandidateStatus.active_bench,
+                created_by_id=admin.id,
+            )
+            db.add(cand)
+            db.flush()
+            parsed = analyze_resume(sample_resume)
+            db.add(
+                Resume(
+                    candidate_id=cand.id,
+                    name="DevOps Resume",
+                    resume_type="DevOps",
+                    parsed_text=sample_resume,
+                    skills_extracted=parsed.skills,
+                    is_default=True,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
     except Exception:
-        pass
+        pass  # never block API startup on bootstrap errors
 
 
 @asynccontextmanager
