@@ -34,3 +34,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_database_url() -> str:
+    """Normalize DATABASE_URL for SQLAlchemy (Render/Heroku use postgres://)."""
+    url = settings.database_url
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql://") and "+psycopg2" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url

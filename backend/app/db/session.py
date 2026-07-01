@@ -3,17 +3,17 @@ from collections.abc import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import settings
+from app.config import get_database_url, settings
 
 _connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 _engine_kwargs: dict = {"pool_pre_ping": True}
 if settings.database_url.startswith("sqlite"):
     _engine_kwargs["connect_args"] = _connect_args
 else:
-    _engine_kwargs["pool_size"] = 10
-    _engine_kwargs["max_overflow"] = 20
+    _engine_kwargs["pool_size"] = 5
+    _engine_kwargs["max_overflow"] = 10
 
-engine = create_engine(settings.database_url, **_engine_kwargs)
+engine = create_engine(get_database_url(), **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

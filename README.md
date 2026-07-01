@@ -24,27 +24,28 @@ Product line under **GenvenX Technologies** (IT staffing pillar).
 
 ---
 
-## Live app
+## Live app (cloud)
 
 | | URL |
 |---|-----|
 | **Web app** | https://talentforge-two.vercel.app |
-| **API health** | https://talentforge-two.vercel.app/api/health |
+| **API** | https://talentforge-api.onrender.com |
+| **API health** | https://talentforge-api.onrender.com/api/health |
 
-Frontend + API deployed on Vercel (same domain — no CORS issues).
+**Architecture:** React SPA on Vercel + FastAPI + PostgreSQL on Render.
 
-### Redeploy (CLI)
+### Redeploy frontend
 
 ```bash
 cd TalentForge
 npx vercel --prod
 ```
 
-### Optional: separate API on Render
+### API on Render
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/electricshadow2k19/talentforge)
 
-Set `VITE_API_URL` in Vercel if using external API.
+Uses `render.yaml` (PostgreSQL + Docker API). `VITE_API_URL` is set to the Render API URL in Vercel.
 
 ---
 
