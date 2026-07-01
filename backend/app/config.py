@@ -9,6 +9,12 @@ def _default_database_url() -> str:
     return "sqlite:///./talentforge.db"
 
 
+def _default_storage_path() -> str:
+    if os.getenv("VERCEL") or os.getenv("VERCEL_ENV"):
+        return "/tmp/talentforge-storage"
+    return "./storage"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -34,7 +40,7 @@ class Settings(BaseSettings):
 
     # Storage — local path or S3
     storage_backend: str = "local"  # local | s3
-    storage_local_path: str = "./storage"
+    storage_local_path: str = _default_storage_path()
     s3_bucket: str = ""
     s3_region: str = "us-east-1"
     aws_access_key_id: str = ""

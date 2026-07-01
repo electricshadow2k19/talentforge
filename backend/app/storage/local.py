@@ -9,7 +9,12 @@ class StorageService:
 
   def __init__(self) -> None:
     self.root = Path(settings.storage_local_path)
-    self.root.mkdir(parents=True, exist_ok=True)
+    try:
+      self.root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+      # Serverless (e.g. Vercel): fall back to /tmp
+      self.root = Path("/tmp/talentforge-storage")
+      self.root.mkdir(parents=True, exist_ok=True)
 
   def save(self, key: str, data: bytes) -> str:
     path = self.root / key
